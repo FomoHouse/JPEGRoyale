@@ -8,24 +8,20 @@ const hre = require("hardhat");
 
 async function main() {
 
-  const arbitrumGoerliEthPriceFeedAddress = "0x62CAe0FA2da220f43a51F86Db2EDb36DcA9A5A08";
-  const arbitrumGoerliVRFCoordinator = "";
-  const arbitrumGoerliVRFSubscriptionId = "";
-  const arbitrumGoerliVRFKeyHash = "";
-  const daoWalletAddress = "";
+  const arbitrumGoerliVRFCoordinator = "0x6D80646bEAdd07cE68cab36c27c626790bBcf17f";
+  const arbitrumGoerliVRFSubscriptionId = "8";
+  const arbitrumGoerliVRFKeyHash = "0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730";
 
   const JPEGRoyale = await hre.ethers.getContractFactory("JPEGRoyale");
   const jpegRoyale = await JPEGRoyale.deploy(
-    arbitrumGoerliEthPriceFeedAddress,
     arbitrumGoerliVRFCoordinator,
     arbitrumGoerliVRFSubscriptionId,
-    arbitrumGoerliVRFKeyHash,
-    daoWalletAddress
+    arbitrumGoerliVRFKeyHash
   );
 
   await jpegRoyale.deployed();
 
-  console.log("Deployed JPEGRoyale contract");
+  console.log(`Deployed JPEGRoyale contract to ${jpegRoyale.address}`);
 }
 
 // We recommend this pattern to be able to use async/await everywhere
