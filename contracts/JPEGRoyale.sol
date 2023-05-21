@@ -26,7 +26,7 @@ contract JPEGRoyale is VRFConsumerBaseV2 {
     uint256 public lastRequestId;
 
     bytes32 keyHash;
-    uint32 callbackGasLimit = 50000;
+    uint32 callbackGasLimit = 100000;
     uint16 requestConfirmations = 3;
     uint32 numWords = 1;
 
