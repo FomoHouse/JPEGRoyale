@@ -203,4 +203,5 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         RequestStatus memory request = s_requests[_requestId];
         return (request.fulfilled, request.randomWords);
     }
+    
 }
