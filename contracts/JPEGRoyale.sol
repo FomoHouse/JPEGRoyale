@@ -9,23 +9,25 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
+// ADD RENTRANCY IMPORT FOR RENTRANCY ATTACK 
+
 contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     ///////////////////// RAFFLE /////////////////////
 
     struct EntryPrices {
-        uint48 numEntries;
+        uint128 numEntries;
         uint256 price;
     }
 
     mapping(uint256 => EntryPrices[5]) public entryPrices;
 
-    struct PlayerEntries {
-        uint256 numEntries;
-        address player;
-    }
+    // struct PlayerEntries {
+    //     uint256 numEntries;
+    //     address player;
+    // }
 
-    mapping(uint256 => PlayerEntries[]) public entries;
+    mapping(uint256 => mapping (address => uint256)) public entries;
 
     mapping(uint256 => uint256) public sellerPrice;
 
@@ -154,6 +156,24 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         return raffles.length - 1;
     }
 
+    function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries) external payable {
+        RaffleInfo storage info = raffleInfo[_raffleId];
+        uint256 priceOfEntry = getEntryPrice(_raffleId, _numOfEntries);
+
+        
+        // info.fundsRaised =  info.fundsRaised + entryPrices[_raffleId][_id].price;
+        // entries[_raffleId].push();
+    }
+
+    function getEntryPrice(uint256 _raffleId, uint256 _numEntries) public view returns (uint256 price) {
+        EntryPrices[5] memory entryList = entryPrices[_raffleId];
+        for (uint8 i = 0; i < 5; i++) {
+            if (entryList[i].numEntries == _numEntries) {
+                return entryList[i].price;
+            }
+        }
+    }
+
 
 
 
@@ -203,5 +223,5 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         RequestStatus memory request = s_requests[_requestId];
         return (request.fulfilled, request.randomWords);
     }
-    
+
 }
