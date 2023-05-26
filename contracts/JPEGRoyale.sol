@@ -15,6 +15,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     ///////////////////// RAFFLE /////////////////////
 
+    error EntryNotAllowed(string errorType);
+
     struct EntryPrices {
         uint128 numEntries;
         uint256 price;
@@ -46,7 +48,6 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         STATUS status;
         uint48 maxEntriesPerUser;
         uint256 fundsRaised;
-
     }
 
     RaffleInfo[] public raffleInfo;
@@ -117,10 +118,10 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         EntryPrices[] calldata _entryPrices, 
         uint48 _maxEntriesPerUser
     ) public onlyRole(GAME_STARTER_ROLE) returns (uint256 raffleId) {
-        require(_maxEntriesPerUser > 0, "maxEntriesPerUser is 0");
-        require(_duration > 30 minutes, "duration < 30 minutes");
-        require(_entryPrices.length > 0, "no entry prices");
-        require(_seller != address(0), "seller is 0x0");
+        require(_maxEntriesPerUser > 0, "Maximum entries per user is 0");
+        require(_duration > 30 minutes, "Duration is less than 30 minutes");
+        require(_entryPrices.length > 0, "No entry prices");
+        require(_seller != address(0), "Seller is 0x0");
 
         Raffle memory raffle = Raffle({
             tokenId: _tokenId,
@@ -142,8 +143,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         raffleInfo.push(info);
 
         for (uint8 i = 0; i < _entryPrices.length; i++) {
-            require(_entryPrices[i].numEntries > 0, "number of entries is 0");
-            require(_entryPrices[i].price >= 0, "price is negative");
+            require(_entryPrices[i].numEntries > 0, "Number of entries is 0");
+            require(_entryPrices[i].price >= 0, "Entry price is negative");
 
             EntryPrices memory prices = EntryPrices({
                 numEntries: _entryPrices[i].numEntries,
@@ -158,11 +159,14 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries) external payable {
         RaffleInfo storage info = raffleInfo[_raffleId];
-        uint256 priceOfEntry = getEntryPrice(_raffleId, _numOfEntries);
+        if (entries[_raffleId][msg.sender] + _numOfEntries > info.maxEntriesPerUser) revert EntryNotAllowed("Exceeded max number of entries");
+        if (info.status != STATUS.STARTED) revert EntryNotAllowed("Raffle not started");
 
-        
-        // info.fundsRaised =  info.fundsRaised + entryPrices[_raffleId][_id].price;
-        // entries[_raffleId].push();
+        uint256 priceOfEntry = getEntryPrice(_raffleId, _numOfEntries);
+        if (msg.value < priceOfEntry) revert EntryNotAllowed("Not enough ETH");
+
+        info.fundsRaised += priceOfEntry;
+        entries[_raffleId][msg.sender] = _numOfEntries;
     }
 
     function getEntryPrice(uint256 _raffleId, uint256 _numEntries) public view returns (uint256 price) {
@@ -173,10 +177,6 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
             }
         }
     }
-
-
-
-
 
     function setCallbackGasLimit(uint32 _callbackGasLimit) public onlyRole(ADMIN_ROLE) returns (uint32 newCallbackGasLimit) {
         callbackGasLimit = _callbackGasLimit;
