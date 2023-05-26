@@ -16,6 +16,20 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
     ///////////////////// RAFFLE /////////////////////
 
     error EntryNotAllowed(string errorType);
+    error CantCreateRaffle(string errorType);
+
+    event RaffleCreated(
+        uint256 indexed raffleId,
+        address indexed tokenAddress,
+        uint256 indexed tokenId
+    );
+
+    event EntryPurchased(
+        uint256 indexed raffleId,
+        address indexed entryBuyer,
+        uint256 indexed entriesBought,
+        uint256 entriesPrice
+    );
 
     struct EntryPrices {
         uint128 numEntries;
@@ -48,6 +62,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         STATUS status;
         uint48 maxEntriesPerUser;
         uint256 fundsRaised;
+        address[] collectionAllowList;
     }
 
     RaffleInfo[] public raffleInfo;
@@ -116,12 +131,13 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         address _seller,
         uint256 _duration, 
         EntryPrices[] calldata _entryPrices, 
-        uint48 _maxEntriesPerUser
+        uint48 _maxEntriesPerUser,
+        address[] calldata _collectionAllowList
     ) public onlyRole(GAME_STARTER_ROLE) returns (uint256 raffleId) {
-        require(_maxEntriesPerUser > 0, "Maximum entries per user is 0");
-        require(_duration > 30 minutes, "Duration is less than 30 minutes");
-        require(_entryPrices.length > 0, "No entry prices");
-        require(_seller != address(0), "Seller is 0x0");
+        if (_maxEntriesPerUser <= 0) revert CantCreateRaffle("Maximum entries per user is <0");
+        if (_duration < 30 minutes) revert CantCreateRaffle("Duration is less than 30 minutes");
+        if (_entryPrices.length <= 0) revert CantCreateRaffle("No entry prices");
+        if (_seller == address(0)) revert CantCreateRaffle("Seller is 0x0");
 
         Raffle memory raffle = Raffle({
             tokenId: _tokenId,
@@ -137,14 +153,15 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         RaffleInfo memory info = RaffleInfo({
             status: STATUS.CREATED,
             maxEntriesPerUser: _maxEntriesPerUser,
-            fundsRaised: 0
+            fundsRaised: 0,
+            collectionAllowList: _collectionAllowList
         });
 
         raffleInfo.push(info);
 
         for (uint8 i = 0; i < _entryPrices.length; i++) {
-            require(_entryPrices[i].numEntries > 0, "Number of entries is 0");
-            require(_entryPrices[i].price >= 0, "Entry price is negative");
+            if (_entryPrices[i].numEntries <= 0) revert CantCreateRaffle("Number of entries is <0");
+            if (_entryPrices[i].price < 0) revert CantCreateRaffle("Entry price is negative");
 
             EntryPrices memory prices = EntryPrices({
                 numEntries: _entryPrices[i].numEntries,
@@ -154,28 +171,34 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
             entryPrices[raffles.length - 1][i] = prices;
         }
 
+        emit RaffleCreated(raffleId, _tokenAddress, _tokenId);
         return raffles.length - 1;
     }
 
     function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries) external payable {
         RaffleInfo storage info = raffleInfo[_raffleId];
         if (entries[_raffleId][msg.sender] + _numOfEntries > info.maxEntriesPerUser) revert EntryNotAllowed("Exceeded max number of entries");
-        if (info.status != STATUS.STARTED) revert EntryNotAllowed("Raffle not started");
+        if (info.status != STATUS.STARTED) revert EntryNotAllowed("Raffle not in 'started' state");
 
-        uint256 priceOfEntry = getEntryPrice(_raffleId, _numOfEntries);
+        int256 _priceOfEntry = getEntryPrice(_raffleId, _numOfEntries);
+        if (_priceOfEntry == -1) revert EntryNotAllowed("Invalid entry amount");
+        uint256 priceOfEntry = uint256(_priceOfEntry);
         if (msg.value < priceOfEntry) revert EntryNotAllowed("Not enough ETH");
 
         info.fundsRaised += priceOfEntry;
         entries[_raffleId][msg.sender] = _numOfEntries;
+
+        emit EntryPurchased(_raffleId, msg.sender, _numOfEntries, priceOfEntry);
     }
 
-    function getEntryPrice(uint256 _raffleId, uint256 _numEntries) public view returns (uint256 price) {
+    function getEntryPrice(uint256 _raffleId, uint256 _numEntries) public view returns (int256 price) {
         EntryPrices[5] memory entryList = entryPrices[_raffleId];
         for (uint8 i = 0; i < 5; i++) {
             if (entryList[i].numEntries == _numEntries) {
-                return entryList[i].price;
+                return int256(entryList[i].price);
             }
         }
+        return -1;
     }
 
     function setCallbackGasLimit(uint32 _callbackGasLimit) public onlyRole(ADMIN_ROLE) returns (uint32 newCallbackGasLimit) {
