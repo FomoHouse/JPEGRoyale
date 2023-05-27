@@ -55,8 +55,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
     mapping(uint256 => mapping (address => uint256)) public entries;
 
     struct EntriesPurchased {
-        uint256 lowerEntryNum;
-        uint256 upperEntryNum;
+        uint256 currentNumberEntries;
         address player;
     }
 
@@ -81,7 +80,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         STATUS status;
         uint48 maxEntriesPerUser;
         uint256 fundsRaised;
-        uint256 totalNumEntriesPurchased;
+        uint256 totalNumberEntriesPurchased;
         address[] collectionAllowList;
     }
 
@@ -193,7 +192,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
             status: STATUS.CREATED,
             maxEntriesPerUser: _maxEntriesPerUser,
             fundsRaised: 0,
-            totalNumEntriesPurchased: 0,
+            totalNumberEntriesPurchased: 0,
             collectionAllowList: _collectionAllowList
         });
 
@@ -268,14 +267,11 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         if (msg.value < priceOfEntry) revert EntryNotAllowed("Not enough ETH");
 
         info.fundsRaised += priceOfEntry;
-        info.totalNumEntriesPurchased += _numOfEntries;
+        info.totalNumberEntriesPurchased += _numOfEntries;
         entries[_raffleId][msg.sender] += _numOfEntries;
 
-        uint256 totalEntries = entriesList[_raffleId].length;
-        uint256 lower = entriesList[_raffleId][totalEntries - 1].upperEntryNum + 1;
         EntriesPurchased memory entryPurchased = EntriesPurchased({
-            lowerEntryNum: lower,
-            upperEntryNum: lower + _numOfEntries,
+            currentNumberEntries: info.totalNumberEntriesPurchased,
             player: msg.sender
         });
 
@@ -294,9 +290,43 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         return -1;
     }
 
-    function getWinnerAddress(uint256 _raffleId, uint256 _normalizedRandomNumber) internal view returns (address) {
-        
+    function getWinnerAddress(uint256 _raffleId, uint256 _normalizedRandomNumber) internal view returns (address winner) {
+        uint256 winnerIndex = findUpperBound(entriesList[_raffleId], _normalizedRandomNumber);
+
+        winner = entriesList[_raffleId][winnerIndex].player;
+        if (winner != address(0)) return winner;
+        else {
+            return platformAddress;
+        }
     }
+
+    function findUpperBound(EntriesPurchased[] storage array, uint256 element) internal view returns (uint256) {
+    if (array.length == 0) {
+        return 0;
+    }
+
+    uint256 low = 0;
+    uint256 high = array.length;
+
+    while (low < high) {
+        uint256 mid = Math.average(low, high);
+
+        // Note that mid will always be strictly less than high (i.e. it will be a valid array index)
+        // because Math.average rounds down (it does integer division with truncation).
+        if (array[mid].currentNumberEntries > element) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+
+    // At this point `low` is the exclusive upper bound. We will return the inclusive upper bound.
+    if (low > 0 && array[low - 1].currentNumberEntries == element) {
+        return low - 1;
+    } else {
+        return low;
+    }
+}
 
     function transferNFTAndFunds(uint256 _raffleId, uint256 _normalizedRandomNumber) internal {
         Raffle storage raffle = raffles[_raffleId];
@@ -347,7 +377,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
         raffleIdAndSize[requestId] = RaffleIdAndSize({
             raffleId: _raffleId,
-            size: raffleInfo[_raffleId].totalNumEntriesPurchased
+            size: raffleInfo[_raffleId].totalNumberEntriesPurchased
         });
 
 
