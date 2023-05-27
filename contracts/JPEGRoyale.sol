@@ -49,6 +49,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     mapping(uint256 => mapping (address => uint256)) public entries;
 
+    mapping(bytes32 => address) public requiredNFTUser;
+
     mapping(uint256 => uint256) public sellerPrice;
 
     struct Raffle {
@@ -195,8 +197,32 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         emit RaffleStarted(_raffleId, msg.sender);
     }
 
-    function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries) external payable {
+    function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries, uint256 _tokenId, address _tokenCollection) external payable {
         RaffleInfo storage info = raffleInfo[_raffleId];
+
+        uint256 allowListLength = info.collectionAllowList.length;
+        if (allowListLength > 0) {
+            bool hasRequiredCollection = false;
+            for (uint256 i; i < allowListLength; i++) {
+                if (info.collectionAllowList[i] == _tokenCollection) {
+                    hasRequiredCollection = true;
+                    break;
+                }
+            }
+
+            if (!hasRequiredCollection) revert EntryNotAllowed("Not in required collection");
+
+            IERC721 requiredNFT = IERC721(_tokenCollection);
+            if (requiredNFT.ownerOf(_tokenId) != msg.sender) revert EntryNotAllowed("Buyer not the owner of tokenId");
+
+            bytes32 hashOfRequiredNFT = keccak256(abi.encode(_raffleId, _tokenId, _tokenCollection));
+            if (requiredNFTUser[hashOfRequiredNFT] == address(0)) {
+                requiredNFTUser[hashOfRequiredNFT] = msg.sender;
+            } else {
+                if (requiredNFTUser[hashOfRequiredNFT] != msg.sender) revert EntryNotAllowed("Token Id already used");
+            }
+        }
+
         if (entries[_raffleId][msg.sender] + _numOfEntries > info.maxEntriesPerUser) revert EntryNotAllowed("Exceeded max number of entries");
         if (info.status != STATUS.STARTED) revert EntryNotAllowed("Raffle not in 'started' state");
 
