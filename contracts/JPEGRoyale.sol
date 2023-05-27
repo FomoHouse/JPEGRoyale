@@ -32,6 +32,12 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         address indexed seller
     );
 
+    event RaffleEnded(
+        uint256 indexed raffleId,
+        address indexed raffleWinner,
+        uint256 indexed amountRaised
+    );
+
     event EntryPurchased(
         uint256 indexed raffleId,
         address indexed entryBuyer,
@@ -46,8 +52,15 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     mapping(uint256 => EntryPrices[5]) public entryPrices;
 
-
     mapping(uint256 => mapping (address => uint256)) public entries;
+
+    struct EntriesPurchased {
+        uint256 lowerEntryNum;
+        uint256 upperEntryNum;
+        address player;
+    }
+
+    mapping(uint256 => EntriesPurchased[]) public entriesList;
 
     mapping(bytes32 => address) public requiredNFTUser;
 
@@ -68,6 +81,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         STATUS status;
         uint48 maxEntriesPerUser;
         uint256 fundsRaised;
+        uint256 totalNumEntriesPurchased;
         address[] collectionAllowList;
     }
 
@@ -104,6 +118,13 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
     uint16 requestConfirmations = 3;
     uint32 numWords = 1;
 
+    struct RaffleIdAndSize {
+        uint256 raffleId;
+        uint256 size;
+    }
+
+    mapping(uint256 => RaffleIdAndSize) public raffleIdAndSize;
+
     ///////////////////// ACCESS-CONTROL /////////////////////
 
     bytes32 public constant GAME_STARTER_ROLE = keccak256("GAME_STARTER_ROLE");
@@ -111,12 +132,21 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     //////////////////////////////////////////
 
+    /*
+    	0x6D80646bEAdd07cE68cab36c27c626790bBcf17f, 8, 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730, [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16], [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16]
+
+
+    */
+
+    address payable public platformAddress;
+
     constructor(
         address _vrfCoordinator,
         uint64 _subscriptionId,
         bytes32 _keyHash,
         address[] memory _gameStarter,
-        address[] memory _admin
+        address[] memory _admin,
+        address _platformAddress
     ) VRFConsumerBaseV2(_vrfCoordinator) {
         COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
         s_subscriptionId = _subscriptionId;
@@ -129,6 +159,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         for (uint i = 0; i < _admin.length; i++) {
             _grantRole(ADMIN_ROLE, _admin[i]);
         }
+
+        platformAddress = payable(_platformAddress);
     }
 
     function createRaffle(
@@ -138,7 +170,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         uint256 _duration, 
         EntryPrices[] calldata _entryPrices, 
         uint48 _maxEntriesPerUser,
-        address[] calldata _collectionAllowList
+        address[] calldata _collectionAllowList,
+        uint256 _assetValue
     ) public onlyRole(GAME_STARTER_ROLE) returns (uint256 raffleId) {
         if (_maxEntriesPerUser <= 0) revert CantCreateRaffle("Maximum entries per user is <0");
         if (_duration < 30 minutes) revert CantCreateRaffle("Duration is less than 30 minutes");
@@ -160,6 +193,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
             status: STATUS.CREATED,
             maxEntriesPerUser: _maxEntriesPerUser,
             fundsRaised: 0,
+            totalNumEntriesPurchased: 0,
             collectionAllowList: _collectionAllowList
         });
 
@@ -176,6 +210,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
             entryPrices[raffles.length - 1][i] = prices;
         }
+
+        sellerPrice[raffles.length - 1] = _assetValue;
 
         emit RaffleCreated(raffleId, _tokenAddress, _tokenId);
         return raffles.length - 1;
@@ -232,7 +268,18 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         if (msg.value < priceOfEntry) revert EntryNotAllowed("Not enough ETH");
 
         info.fundsRaised += priceOfEntry;
-        entries[_raffleId][msg.sender] = _numOfEntries;
+        info.totalNumEntriesPurchased += _numOfEntries;
+        entries[_raffleId][msg.sender] += _numOfEntries;
+
+        uint256 totalEntries = entriesList[_raffleId].length;
+        uint256 lower = entriesList[_raffleId][totalEntries - 1].upperEntryNum + 1;
+        EntriesPurchased memory entryPurchased = EntriesPurchased({
+            lowerEntryNum: lower,
+            upperEntryNum: lower + _numOfEntries,
+            player: msg.sender
+        });
+
+        entriesList[_raffleId].push(entryPurchased);
 
         emit EntryPurchased(_raffleId, msg.sender, _numOfEntries, priceOfEntry);
     }
@@ -247,16 +294,41 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         return -1;
     }
 
-    function setCallbackGasLimit(uint32 _callbackGasLimit) public onlyRole(ADMIN_ROLE) returns (uint32 newCallbackGasLimit) {
-        callbackGasLimit = _callbackGasLimit;
-        return callbackGasLimit;
+    function getWinnerAddress(uint256 _raffleId, uint256 _normalizedRandomNumber) internal view returns (address) {
+        
     }
 
-    function addGameStarterRole(address _newGameStarter) public onlyRole(ADMIN_ROLE) {
-        _grantRole(GAME_STARTER_ROLE, _newGameStarter);
+    function transferNFTAndFunds(uint256 _raffleId, uint256 _normalizedRandomNumber) internal {
+        Raffle storage raffle = raffles[_raffleId];
+        RaffleInfo storage info = raffleInfo[_raffleId];
+
+        raffle.winner = getWinnerAddress(_raffleId, _normalizedRandomNumber);
+        info.status = STATUS.ENDED;
+
+        IERC721 prizeAsset = IERC721(raffle.tokenAddress);
+        prizeAsset.transferFrom(address(this), raffle.winner, raffle.tokenId);
+
+        if (info.fundsRaised > sellerPrice[_raffleId]) {
+            uint256 amountForPlatform = info.fundsRaised - sellerPrice[_raffleId];
+
+            (bool sentToSeller, ) = raffle.seller.call{value: sellerPrice[_raffleId]}("");
+            require(sentToSeller, "Failed to send ether to seller");
+
+            (bool sentToPlatform, ) = platformAddress.call{value: amountForPlatform}("");
+            require(sentToPlatform, "Failed to send ether to platform");
+        } else {
+            (bool sentToSeller, ) = raffle.seller.call{value: info.fundsRaised}("");
+            require(sentToSeller, "Failed to send ether to seller");
+        }
+        
+        emit RaffleEnded(
+            _raffleId,
+            raffle.winner,
+            info.fundsRaised
+        );
     }
 
-    function requestRandomWords() external returns (uint256 requestId) {
+    function endRaffle(uint256 _raffleId) internal returns (uint256 requestId) {
         requestId = COORDINATOR.requestRandomWords(
             keyHash,
             s_subscriptionId,
@@ -272,6 +344,13 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         requestIds.push(requestId);
         lastRequestId = requestId;
         emit RequestSent(requestId, numWords);
+
+        raffleIdAndSize[requestId] = RaffleIdAndSize({
+            raffleId: _raffleId,
+            size: raffleInfo[_raffleId].totalNumEntriesPurchased
+        });
+
+
         return requestId;
     }
 
@@ -282,7 +361,12 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         require(s_requests[_requestId].exists, "request not found");
         s_requests[_requestId].fulfilled = true;
         s_requests[_requestId].randomWords = _randomWords;
+
+        uint256 normalizedRandomNumber = (_randomWords[0] % raffleIdAndSize[_requestId].size) + 1;
+
         emit RequestFulfilled(_requestId, _randomWords);
+
+        transferNFTAndFunds(raffleIdAndSize[_requestId].raffleId, normalizedRandomNumber);
     }
 
     function getRequestStatus(
@@ -291,6 +375,15 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         require(s_requests[_requestId].exists, "request not found");
         RequestStatus memory request = s_requests[_requestId];
         return (request.fulfilled, request.randomWords);
+    }
+
+    function setCallbackGasLimit(uint32 _callbackGasLimit) public onlyRole(ADMIN_ROLE) returns (uint32 newCallbackGasLimit) {
+        callbackGasLimit = _callbackGasLimit;
+        return callbackGasLimit;
+    }
+
+    function addGameStarterRole(address _newGameStarter) public onlyRole(ADMIN_ROLE) {
+        _grantRole(GAME_STARTER_ROLE, _newGameStarter);
     }
 
 }
