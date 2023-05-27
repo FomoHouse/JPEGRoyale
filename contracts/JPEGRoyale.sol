@@ -5,6 +5,8 @@ pragma solidity 0.8.17;
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 import "@openzeppelin/contracts/utils/math/Math.sol";
@@ -17,11 +19,17 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     error EntryNotAllowed(string errorType);
     error CantCreateRaffle(string errorType);
+    error CantStartRaffle(string errorType);
 
     event RaffleCreated(
         uint256 indexed raffleId,
         address indexed tokenAddress,
         uint256 indexed tokenId
+    );
+
+    event RaffleStarted(
+        uint256 indexed raffleId,
+        address indexed seller
     );
 
     event EntryPurchased(
@@ -38,10 +46,6 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     mapping(uint256 => EntryPrices[5]) public entryPrices;
 
-    // struct PlayerEntries {
-    //     uint256 numEntries;
-    //     address player;
-    // }
 
     mapping(uint256 => mapping (address => uint256)) public entries;
 
@@ -173,6 +177,22 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
         emit RaffleCreated(raffleId, _tokenAddress, _tokenId);
         return raffles.length - 1;
+    }
+
+    function startRaffle(uint256 _raffleId) external {
+        Raffle storage raffle = raffles[_raffleId];
+        RaffleInfo storage info = raffleInfo[_raffleId];
+
+        if (info.status != STATUS.CREATED) revert CantStartRaffle("Raffle not in accepted state");
+
+        IERC721 token = IERC721(raffle.tokenAddress);
+        if (token.ownerOf(raffle.tokenId) != msg.sender) revert CantStartRaffle("Caller does not own NFT");
+
+        info.status = STATUS.CREATED;
+        raffle.seller = msg.sender;
+        token.transferFrom(msg.sender, address(this), raffle.tokenId);
+
+        emit RaffleStarted(_raffleId, msg.sender);
     }
 
     function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries) external payable {
