@@ -25,6 +25,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
     error EntryNotAllowed(string errorType);
     error CantCreateRaffle(string errorType);
     error CantStartRaffle(string errorType);
+    error CantEndRaffle(string errorType);
 
     event RaffleCreated(
         uint256 indexed raffleId,
@@ -310,32 +311,32 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
     }
 
     function findUpperBound(EntriesPurchased[] storage array, uint256 element) internal view returns (uint256) {
-    if (array.length == 0) {
-        return 0;
-    }
+        if (array.length == 0) {
+            return 0;
+        }
 
-    uint256 low = 0;
-    uint256 high = array.length;
+        uint256 low = 0;
+        uint256 high = array.length;
 
-    while (low < high) {
-        uint256 mid = Math.average(low, high);
+        while (low < high) {
+            uint256 mid = Math.average(low, high);
 
-        // Note that mid will always be strictly less than high (i.e. it will be a valid array index)
-        // because Math.average rounds down (it does integer division with truncation).
-        if (array[mid].currentNumberEntries > element) {
-            high = mid;
+            // Note that mid will always be strictly less than high (i.e. it will be a valid array index)
+            // because Math.average rounds down (it does integer division with truncation).
+            if (array[mid].currentNumberEntries > element) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        // At this point `low` is the exclusive upper bound. We will return the inclusive upper bound.
+        if (low > 0 && array[low - 1].currentNumberEntries == element) {
+            return low - 1;
         } else {
-            low = mid + 1;
+            return low;
         }
     }
-
-    // At this point `low` is the exclusive upper bound. We will return the inclusive upper bound.
-    if (low > 0 && array[low - 1].currentNumberEntries == element) {
-        return low - 1;
-    } else {
-        return low;
-    }
-}
 
     function transferNFTAndFunds(uint256 _raffleId, uint256 _normalizedRandomNumber) internal {
         Raffle storage raffle = raffles[_raffleId];
@@ -367,8 +368,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         );
     }
 
-    function endRaffle(uint256 _raffleId) internal returns (uint256 requestId) {
-        requestId = COORDINATOR.requestRandomWords(
+    function endRaffle(uint256 _raffleId) public onlyRole(GELATO_PROXY_ROLE) {
+        uint256 requestId = COORDINATOR.requestRandomWords(
             keyHash,
             s_subscriptionId,
             requestConfirmations,
@@ -389,19 +390,30 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
             size: raffleInfo[_raffleId].totalNumberEntriesPurchased
         });
 
-
-        return requestId;
-    }
-
-    function batchCloseRaffles(bool[] memory _raffleIds) public onlyRole(GELATO_PROXY_ROLE) {
-        for (uint256 i = 0; i < _raffleIds.length; i++) {
-            if (_raffleIds[i]) endRaffle(i);
-        }
-
         (uint256 fee, address feeToken) = _getFeeDetails();
 
-        _transfer(fee, feeToken);
-    } 
+        if (raffleInfo[_raffleId].fundsRaised < fee) revert CantEndRaffle("Not enough funds to cover Gelato fee");
+        else {
+            _transfer(fee, feeToken);
+            raffleInfo[_raffleId].fundsRaised -= fee;
+        }
+    }
+
+    // function batchCloseRaffles(bool[] memory _raffleIds) public onlyRole(GELATO_PROXY_ROLE) {
+    //     (uint256 fee, address feeToken) = _getFeeDetails();
+    //     uint256 fundsAvailableForFees
+
+    //     for (uint256 i = 0; i < _raffleIds.length; i++) {
+    //         if (_raffleIds[i]) 
+    //     }
+    //     for (uint256 i = 0; i < _raffleIds.length; i++) {
+    //         if (_raffleIds[i]) endRaffle(i);
+    //     }
+
+    //     (uint256 fee, address feeToken) = _getFeeDetails();
+
+    //     _transfer(fee, feeToken);
+    // } 
 
     function fulfillRandomWords(
         uint256 _requestId,
@@ -436,19 +448,21 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
     }
 
     function checker() external view override returns (bool canExec, bytes memory execPayload) {
-        bool[] memory rafflesAwaitingClose = new bool[](raffles.length);
+        uint256 raffleIdToClose;
+        bool close = false;
 
         for (uint256 i = 0; i < raffleInfo.length; i++) {
             if (raffleInfo[i].status == STATUS.STARTED && (raffles[i].startTime + raffles[i].duration > block.timestamp)) {
-                rafflesAwaitingClose[i] = true;
-            } else rafflesAwaitingClose[i] = false;
+                raffleIdToClose = i;
+                close = true;
+            }
         }
 
-        if (rafflesAwaitingClose.length == 0) return (false, bytes("No raffles awaiting close"));
+        if (!close) return (false, bytes("No raffles awaiting close"));
         else {
             execPayload = abi.encodeWithSelector(
-                this.batchCloseRaffles.selector,
-                rafflesAwaitingClose
+                this.endRaffle.selector,
+                raffleIdToClose
             );
             return (true, execPayload);
         }
