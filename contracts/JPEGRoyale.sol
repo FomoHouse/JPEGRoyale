@@ -7,13 +7,18 @@ import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
+import "./AutomateTaskCreator.sol";
+import "./AutomateReady.sol";
+
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
+import "./IResolver.sol";
+
 // ADD RENTRANCY IMPORT FOR RENTRANCY ATTACK 
 
-contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
+contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateReady {
 
     ///////////////////// RAFFLE /////////////////////
 
@@ -128,13 +133,12 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
 
     bytes32 public constant GAME_STARTER_ROLE = keccak256("GAME_STARTER_ROLE");
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant GELATO_PROXY_ROLE = keccak256("GELATO_PROXY_ROLE");
 
     //////////////////////////////////////////
 
     /*
     	0x6D80646bEAdd07cE68cab36c27c626790bBcf17f, 8, 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730, [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16], [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16]
-
-
     */
 
     address payable public platformAddress;
@@ -145,8 +149,11 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         bytes32 _keyHash,
         address[] memory _gameStarter,
         address[] memory _admin,
-        address _platformAddress
-    ) VRFConsumerBaseV2(_vrfCoordinator) {
+        address _platformAddress,
+        address _gelatoProxyAddress,
+        address _automate, 
+        address _taskCreator
+    ) VRFConsumerBaseV2(_vrfCoordinator) AutomateReady(_automate, _taskCreator) {
         COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
         s_subscriptionId = _subscriptionId;
         keyHash = _keyHash;
@@ -158,6 +165,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         for (uint i = 0; i < _admin.length; i++) {
             _grantRole(ADMIN_ROLE, _admin[i]);
         }
+
+        _grantRole(GELATO_PROXY_ROLE, _gelatoProxyAddress);
 
         platformAddress = payable(_platformAddress);
     }
@@ -384,6 +393,16 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         return requestId;
     }
 
+    function batchCloseRaffles(bool[] memory _raffleIds) public onlyRole(GELATO_PROXY_ROLE) {
+        for (uint256 i = 0; i < _raffleIds.length; i++) {
+            if (_raffleIds[i]) endRaffle(i);
+        }
+
+        (uint256 fee, address feeToken) = _getFeeDetails();
+
+        _transfer(fee, feeToken);
+    } 
+
     function fulfillRandomWords(
         uint256 _requestId,
         uint256[] memory _randomWords
@@ -416,4 +435,22 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl {
         _grantRole(GAME_STARTER_ROLE, _newGameStarter);
     }
 
+    function checker() external view override returns (bool canExec, bytes memory execPayload) {
+        bool[] memory rafflesAwaitingClose = new bool[](raffles.length);
+
+        for (uint256 i = 0; i < raffleInfo.length; i++) {
+            if (raffleInfo[i].status == STATUS.STARTED && (raffles[i].startTime + raffles[i].duration > block.timestamp)) {
+                rafflesAwaitingClose[i] = true;
+            } else rafflesAwaitingClose[i] = false;
+        }
+
+        if (rafflesAwaitingClose.length == 0) return (false, bytes("No raffles awaiting close"));
+        else {
+            execPayload = abi.encodeWithSelector(
+                this.batchCloseRaffles.selector,
+                rafflesAwaitingClose
+            );
+            return (true, execPayload);
+        }
+    }
 }
