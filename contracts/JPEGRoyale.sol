@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.17;
+pragma solidity ^0.8.9;
 
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
@@ -137,10 +137,6 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
     bytes32 public constant GELATO_PROXY_ROLE = keccak256("GELATO_PROXY_ROLE");
 
     //////////////////////////////////////////
-
-    /*
-    	0x6D80646bEAdd07cE68cab36c27c626790bBcf17f, 8, 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730, [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16], [0xA21B8cF5C9A5ED69b18FFB9e55d13c96A5741C16]
-    */
 
     address payable public platformAddress;
 
@@ -398,22 +394,6 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
             raffleInfo[_raffleId].fundsRaised -= fee;
         }
     }
-
-    // function batchCloseRaffles(bool[] memory _raffleIds) public onlyRole(GELATO_PROXY_ROLE) {
-    //     (uint256 fee, address feeToken) = _getFeeDetails();
-    //     uint256 fundsAvailableForFees
-
-    //     for (uint256 i = 0; i < _raffleIds.length; i++) {
-    //         if (_raffleIds[i]) 
-    //     }
-    //     for (uint256 i = 0; i < _raffleIds.length; i++) {
-    //         if (_raffleIds[i]) endRaffle(i);
-    //     }
-
-    //     (uint256 fee, address feeToken) = _getFeeDetails();
-
-    //     _transfer(fee, feeToken);
-    // } 
 
     function fulfillRandomWords(
         uint256 _requestId,
