@@ -16,9 +16,9 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "./IResolver.sol";
 
-// ADD RENTRANCY IMPORT FOR RENTRANCY ATTACK 
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateReady {
+contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, ReentrancyGuard, IResolver, AutomateReady {
 
     ///////////////////// RAFFLE /////////////////////
 
@@ -179,7 +179,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         uint256 _assetValue
     ) public onlyRole(GAME_STARTER_ROLE) returns (uint256 raffleId) {
         if (_maxEntriesPerUser <= 0) revert CantCreateRaffle("Maximum entries per user is <0");
-        if (_duration < 30 minutes) revert CantCreateRaffle("Duration is less than 30 minutes");
+        if (_duration < 1 minutes) revert CantCreateRaffle("Duration is less than 1 minutes");
         if (_entryPrices.length <= 0) revert CantCreateRaffle("No entry prices");
         if (_seller == address(0)) revert CantCreateRaffle("Seller is 0x0");
 
@@ -231,14 +231,14 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         IERC721 token = IERC721(raffle.tokenAddress);
         if (token.ownerOf(raffle.tokenId) != msg.sender) revert CantStartRaffle("Caller does not own NFT");
 
-        info.status = STATUS.CREATED;
+        info.status = STATUS.STARTED;
         raffle.seller = msg.sender;
         token.transferFrom(msg.sender, address(this), raffle.tokenId);
 
         emit RaffleStarted(_raffleId, msg.sender);
     }
 
-    function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries, uint256 _tokenId, address _tokenCollection) external payable {
+    function purchaseEntry(uint256 _raffleId, uint256 _numOfEntries, uint256 _tokenId, address _tokenCollection) external payable nonReentrant {
         RaffleInfo storage info = raffleInfo[_raffleId];
 
         uint256 allowListLength = info.collectionAllowList.length;
@@ -334,7 +334,7 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         }
     }
 
-    function transferNFTAndFunds(uint256 _raffleId, uint256 _normalizedRandomNumber) internal {
+    function transferNFTAndFunds(uint256 _raffleId, uint256 _normalizedRandomNumber) internal nonReentrant {
         Raffle storage raffle = raffles[_raffleId];
         RaffleInfo storage info = raffleInfo[_raffleId];
 
@@ -364,8 +364,8 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         );
     }
 
-    function endRaffle(uint256 _raffleId) public onlyRole(GELATO_PROXY_ROLE) {
-        uint256 requestId = COORDINATOR.requestRandomWords(
+    function endRaffle(uint256 _raffleId) public onlyRole(GELATO_PROXY_ROLE) returns (uint256 requestId) nonReentrant {
+        requestId = COORDINATOR.requestRandomWords(
             keyHash,
             s_subscriptionId,
             requestConfirmations,
@@ -386,19 +386,21 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
             size: raffleInfo[_raffleId].totalNumberEntriesPurchased
         });
 
-        (uint256 fee, address feeToken) = _getFeeDetails();
+        raffleInfo[_raffleId].status = STATUS.ENDING;
 
-        if (raffleInfo[_raffleId].fundsRaised < fee) revert CantEndRaffle("Not enough funds to cover Gelato fee");
-        else {
-            _transfer(fee, feeToken);
-            raffleInfo[_raffleId].fundsRaised -= fee;
-        }
+        // (uint256 fee, address feeToken) = _getFeeDetails();
+
+        // if (raffleInfo[_raffleId].fundsRaised < fee) revert CantEndRaffle("Not enough funds to cover Gelato fee");
+        // else {
+        //     _transfer(fee, feeToken);
+        //     raffleInfo[_raffleId].fundsRaised -= fee;
+        // }
     }
 
     function fulfillRandomWords(
         uint256 _requestId,
         uint256[] memory _randomWords
-    ) internal override {
+    ) internal override nonReentrant {
         require(s_requests[_requestId].exists, "request not found");
         s_requests[_requestId].fulfilled = true;
         s_requests[_requestId].randomWords = _randomWords;
@@ -427,12 +429,16 @@ contract JPEGRoyale is VRFConsumerBaseV2, AccessControl, IResolver, AutomateRead
         _grantRole(GAME_STARTER_ROLE, _newGameStarter);
     }
 
+    function setGelatoProxyAddress(address _newGelatoProxyAddress) public onlyRole(ADMIN_ROLE) {
+        _grantRole(GELATO_PROXY_ROLE, _newGelatoProxyAddress);
+    }
+
     function checker() external view override returns (bool canExec, bytes memory execPayload) {
         uint256 raffleIdToClose;
         bool close = false;
 
         for (uint256 i = 0; i < raffleInfo.length; i++) {
-            if (raffleInfo[i].status == STATUS.STARTED && (raffles[i].startTime + raffles[i].duration > block.timestamp)) {
+            if (raffleInfo[i].status == STATUS.STARTED && (raffles[i].startTime + raffles[i].duration < block.timestamp)) {
                 raffleIdToClose = i;
                 close = true;
             }
